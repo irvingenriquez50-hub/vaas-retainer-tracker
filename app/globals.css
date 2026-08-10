@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background: #000000;
+  color: #f5f3ec;
+  font-family: "Inter", sans-serif;
+}
+
+.font-display {
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.font-mono-vaas {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.vaas-gold-text {
+  background: linear-gradient(135deg, #b8860b 0%, #e8cd82 50%, #b8860b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.vaas-gold-bg {
+  background: linear-gradient(135deg, #b8860b 0%, #e8cd82 50%, #b8860b 100%);
+}
