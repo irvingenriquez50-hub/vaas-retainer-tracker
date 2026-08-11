@@ -65,13 +65,13 @@ export default function AdminPage() {
       <div className="px-5 mt-4 flex flex-col gap-3">
         {rows === null && <div className="text-sm text-center py-10" style={{ color: MUTED }}>Cargando...</div>}
         {rows?.map((r) => (
-          <div key={r.id} className="rounded-xl p-4" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+          <div key={r.id} onClick={() => router.push(`/admin/user/${r.id}`)} className="rounded-xl p-4 cursor-pointer active:opacity-70" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium text-sm">{r.full_name || r.email}</div>
                 <div className="text-xs" style={{ color: MUTED }}>{r.email}</div>
               </div>
-              <button onClick={() => removeUserData(r.id)} className="p-2 rounded-lg" style={{ background: "#E5484D22" }} title="Borrar todos los datos de este usuario">
+              <button onClick={(e) => { e.stopPropagation(); removeUserData(r.id); }} className="p-2 rounded-lg" style={{ background: "#E5484D22" }} title="Borrar todos los datos de este usuario">
                 <Trash2 size={15} color="#E5484D" />
               </button>
             </div>
