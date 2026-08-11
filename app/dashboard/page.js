@@ -70,6 +70,11 @@ const CATEGORIES = [
 const catInfo = (key) => CATEGORIES.find((c) => c.key === key) || CATEGORIES[3];
 
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n || 0);
+const shortDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+};
 const monthKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const monthLabel = (key, lang) => {
   const [y, m] = key.split("-").map(Number);
@@ -166,7 +171,7 @@ export default function Dashboard() {
     });
     const q = query.trim().toLowerCase();
     const searched = q ? base.filter((d) => `${d.marca} ${d.producto}`.toLowerCase().includes(q)) : base;
-    return [...searched].sort((a, b) => new Date(b.deleted_at || b.created_at) - new Date(a.deleted_at || a.created_at));
+    return [...searched].sort((a, b) => new Date(a.deleted_at || a.created_at) - new Date(b.deleted_at || b.created_at));
   }, [monthDeals, tab, query]);
 
   const openAdd = () => {
@@ -390,9 +395,12 @@ export default function Dashboard() {
               <div key={deal.id} className="rounded-xl p-4" style={{ background: SURFACE, border: `1px solid ${GOLD_DIM}` }}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="vaas-gold-text text-[10.5px] font-bold">{t("bot_closed")}</div>
-                  <button onClick={() => toggleTimezone(deal)} className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1" style={{ background: BORDER, color: MUTED }}>
-                    {tz.flag} {tz[lang]}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => toggleTimezone(deal)} className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1" style={{ background: BORDER, color: MUTED }}>
+                      {tz.flag} {tz[lang]}
+                    </button>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono-vaas" style={{ background: BORDER, color: MUTED }}>{shortDate(deal.created_at)}</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-4 mt-1">
                   <span className="vaas-gold-text font-mono-vaas text-lg font-bold">{money(deal.precio)}</span>
@@ -451,6 +459,7 @@ export default function Dashboard() {
                     <button onClick={() => toggleTimezone(deal)} className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1" style={{ background: BORDER, color: MUTED }}>
                       {tz.flag} {tz[lang]}
                     </button>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono-vaas" style={{ background: BORDER, color: MUTED }}>{shortDate(deal.created_at)}</span>
                   </div>
                   {deal.producto && <div className="text-xs mt-0.5" style={{ color: MUTED }}>🏷️ {deal.producto}</div>}
                 </div>
