@@ -98,7 +98,7 @@ export default function Dashboard() {
 
   const [profile, setProfile] = useState(null);
   const [deals, setDeals] = useState(null);
-  const [tab, setTab] = useState("revision");
+  const [tab, setTab] = useState("activos");
   const [month, setMonth] = useState(monthKey());
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(new Date().getFullYear());
@@ -353,9 +353,9 @@ export default function Dashboard() {
 
       <div className="flex gap-2 px-5 pt-4 overflow-x-auto">
         {[
-          { key: "revision", label: `${t("tab_revision")}${counts.revision ? ` (${counts.revision})` : ""}` },
           { key: "activos", label: t("tab_activos") },
           { key: "pagados", label: t("tab_pagados") },
+          { key: "revision", label: `${t("tab_revision")}${counts.revision ? ` (${counts.revision})` : ""}` },
           { key: "eliminados", label: `${t("tab_eliminados")}${counts.eliminados ? ` (${counts.eliminados})` : ""}` },
         ].map((tb) => (
           <button key={tb.key} onClick={() => setTab(tb.key)} className="px-3.5 py-2 rounded-lg text-sm font-medium flex-shrink-0"
