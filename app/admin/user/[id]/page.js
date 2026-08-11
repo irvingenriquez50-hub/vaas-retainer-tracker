@@ -4,7 +4,7 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
 import {
   ArrowLeft, Eye, Pencil, MessageCircle, Mail, ChevronRight, Trash2,
-  BookOpen, Link2, FileText, Lock, Unlock,
+  BookOpen, Link2, FileText, Lock, Unlock, X, Plus,
 } from "lucide-react";
 
 const STAGE_KEYS = ["no_solicitado", "solicitado", "llego", "en_progreso", "posteado", "pagado"];
@@ -16,6 +16,13 @@ const STAGE_LABELS = {
 const stageIndex = (key) => STAGE_KEYS.indexOf(key);
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n || 0);
 const TZ_FLAG = { china: "🇨🇳 China", us: "🇺🇸 US" };
+const CATEGORIES = [
+  { key: "beauty", label: "Beauty", color: "#E879A6" },
+  { key: "health", label: "Health/Suplementos", color: "#D9B85C" },
+  { key: "electronics", label: "Electronics", color: "#5BB8E8" },
+  { key: "otro", label: "Otro", color: "#9CA6B4" },
+];
+const catInfo = (key) => CATEGORIES.find((c) => c.key === key) || CATEGORIES[3];
 
 export default function AdminUserDetail() {
   const router = useRouter();
@@ -23,12 +30,16 @@ export default function AdminUserDetail() {
   const supabase = createClient();
   const userId = params.id;
 
-  const [me, setMe] = useState(null);
   const [targetProfile, setTargetProfile] = useState(null);
   const [deals, setDeals] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [tab, setTab] = useState("activos");
   const [error, setError] = useState("");
+  const [detailDeal, setDetailDeal] = useState(null); // pencil modal
+  const [draft, setDraft] = useState(null);
+  const [notesDeal, setNotesDeal] = useState(null); // book modal
+  const [newScript, setNewScript] = useState("");
+  const [newLink, setNewLink] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -36,11 +47,9 @@ export default function AdminUserDetail() {
       if (!user) return router.replace("/login");
       const { data: myProf } = await supabase.from("profiles").select("*").eq("id", user.id).single();
       if (!myProf?.is_admin) return router.replace("/dashboard");
-      setMe(myProf);
 
       const { data: tProf } = await supabase.from("profiles").select("*").eq("id", userId).single();
       setTargetProfile(tProf);
-
       loadDeals();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,12 +88,54 @@ export default function AdminUserDetail() {
     loadDeals();
   };
 
+  // ---- pencil: view/edit full deal details ----
+  const openDetail = (deal) => {
+    setDraft({ ...deal, precio: String(deal.precio), videos: String(deal.videos), email: deal.email || "" });
+    setDetailDeal(deal);
+  };
+  const saveDetail = async () => {
+    if (!editMode || !draft) return;
+    await supabase.from("deals").update({
+      marca: draft.marca, producto: draft.producto || "", categoria: draft.categoria || null,
+      precio: Number(draft.precio), videos: Number(draft.videos), telefono: draft.telefono || "",
+      email: draft.email || "", timezone: draft.timezone || "china", updated_at: new Date().toISOString(),
+    }).eq("id", detailDeal.id);
+    setDetailDeal(null);
+    loadDeals();
+  };
+
+  // ---- notes ----
+  const updateNotes = async (dealId, patch) => {
+    if (!editMode) return;
+    const current = (deals || []).find((d) => d.id === dealId);
+    const nextNotes = { scripts: [], links: [], notas: "", ...(current?.notes || {}), ...patch };
+    await supabase.from("deals").update({ notes: nextNotes }).eq("id", dealId);
+    loadDeals();
+    setNotesDeal((prev) => prev ? { ...prev, notes: nextNotes } : prev);
+  };
+  const addScript = () => {
+    if (!newScript.trim() || !notesDeal) return;
+    const scripts = [...(notesDeal.notes?.scripts || []), { id: `s_${Date.now()}`, text: newScript.trim() }];
+    updateNotes(notesDeal.id, { scripts });
+    setNewScript("");
+  };
+  const removeScript = (id) => updateNotes(notesDeal.id, { scripts: (notesDeal.notes?.scripts || []).filter((s) => s.id !== id) });
+  const addLink = () => {
+    if (!newLink.trim() || !notesDeal) return;
+    const links = [...(notesDeal.notes?.links || []), { id: `l_${Date.now()}`, url: newLink.trim() }];
+    updateNotes(notesDeal.id, { links });
+    setNewLink("");
+  };
+  const removeLink = (id) => updateNotes(notesDeal.id, { links: (notesDeal.notes?.links || []).filter((l) => l.id !== id) });
+  const notesCount = (deal) => (deal.notes?.scripts?.length || 0) + (deal.notes?.links?.length || 0) + (deal.notes?.notas?.trim() ? 1 : 0);
+
   const waLink = (phone) => {
     const digits = (phone || "").replace(/[^0-9]/g, "");
     return digits ? `https://wa.me/${digits}` : null;
   };
 
   const BG = "#000000", SURFACE = "#0E0E0C", BORDER = "#242119", GOLD = "#D6B860", WHITE = "#F5F3EC", MUTED = "#8C8574";
+  const inputStyle = (locked) => ({ background: locked ? "#161512" : BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px", fontSize: 14, color: locked ? MUTED : WHITE, width: "100%", outline: "none" });
 
   return (
     <div className="min-h-screen pb-16" style={{ background: BG, color: WHITE }}>
@@ -99,31 +150,21 @@ export default function AdminUserDetail() {
           </div>
         </div>
 
-        {/* view/edit mode toggle */}
         <div className="flex gap-2 rounded-xl p-1" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
-          <button
-            onClick={() => setEditMode(false)}
-            className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold"
-            style={!editMode ? { background: GOLD, color: "#1A1608" } : { color: MUTED }}
-          >
+          <button onClick={() => setEditMode(false)} className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold" style={!editMode ? { background: GOLD, color: "#1A1608" } : { color: MUTED }}>
             <Eye size={14} /> Ver
           </button>
-          <button
-            onClick={() => setEditMode(true)}
-            className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold"
-            style={editMode ? { background: "#E5484D", color: "#fff" } : { color: MUTED }}
-          >
+          <button onClick={() => setEditMode(true)} className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold" style={editMode ? { background: "#E5484D", color: "#fff" } : { color: MUTED }}>
             <Pencil size={14} /> Editar
           </button>
         </div>
-        {editMode && (
+        {editMode ? (
           <div className="flex items-center gap-1.5 mt-2 text-[11px]" style={{ color: "#F2994A" }}>
             <Unlock size={12} /> Modo edición activo — los cambios afectan la cuenta de {targetProfile?.full_name || "esta persona"}
           </div>
-        )}
-        {!editMode && (
+        ) : (
           <div className="flex items-center gap-1.5 mt-2 text-[11px]" style={{ color: MUTED }}>
-            <Lock size={12} /> Modo de solo lectura
+            <Lock size={12} /> Modo de solo lectura — puedes ver todo, pero nada se puede cambiar
           </div>
         )}
       </div>
@@ -161,11 +202,20 @@ export default function AdminUserDetail() {
                   {deal.producto && <div className="text-xs mt-0.5" style={{ color: MUTED }}>🏷️ {deal.producto}</div>}
                   {deal.timezone && <div className="text-[10px] mt-1" style={{ color: MUTED }}>{TZ_FLAG[deal.timezone] || deal.timezone}</div>}
                 </div>
-                {editMode && idx > -1 && (
-                  <button onClick={() => deleteDeal(deal)} className="p-2 rounded-lg" style={{ background: "#E5484D22" }}>
-                    <Trash2 size={16} color="#E5484D" />
+                <div className="flex gap-1.5">
+                  <button onClick={() => setNotesDeal(deal)} className="p-2 rounded-lg relative" style={{ background: `${GOLD}22` }}>
+                    <BookOpen size={16} color={GOLD} />
+                    {notesCount(deal) > 0 && <span className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ width: 16, height: 16, background: GOLD, color: "#1A1608" }}>{notesCount(deal)}</span>}
                   </button>
-                )}
+                  <button onClick={() => openDetail(deal)} className="p-2 rounded-lg" style={{ background: "#5BB8E822" }}>
+                    <Pencil size={16} color="#5BB8E8" />
+                  </button>
+                  {editMode && (
+                    <button onClick={() => deleteDeal(deal)} className="p-2 rounded-lg" style={{ background: "#E5484D22" }}>
+                      <Trash2 size={16} color="#E5484D" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-4 mt-3 flex-wrap">
@@ -182,13 +232,7 @@ export default function AdminUserDetail() {
                   <div className="flex items-center">
                     {STAGE_KEYS.map((s, i) => (
                       <div key={s} className="flex items-center flex-1">
-                        <button
-                          onClick={() => jumpStage(deal, s)}
-                          disabled={!editMode}
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ background: i <= idx ? STAGE_COLORS[s] : BORDER, cursor: editMode ? "pointer" : "default" }}
-                          title={STAGE_LABELS[s]}
-                        />
+                        <button onClick={() => jumpStage(deal, s)} disabled={!editMode} className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: i <= idx ? STAGE_COLORS[s] : BORDER, cursor: editMode ? "pointer" : "default" }} title={STAGE_LABELS[s]} />
                         {i < STAGE_KEYS.length - 1 && <div className="flex-1 h-[2px]" style={{ background: i < idx ? STAGE_COLORS[STAGE_KEYS[i + 1]] : BORDER }} />}
                       </div>
                     ))}
@@ -203,30 +247,133 @@ export default function AdminUserDetail() {
                   </div>
                 </div>
               )}
-
-              {/* notes — always visible in view mode, read-only */}
-              {(deal.notes?.scripts?.length > 0 || deal.notes?.links?.length > 0 || deal.notes?.notas?.trim()) && (
-                <div className="mt-3.5 pt-3.5" style={{ borderTop: `1px solid ${BORDER}` }}>
-                  <div className="flex items-center gap-1.5 mb-2"><BookOpen size={13} color={GOLD} /><span className="text-xs font-semibold">Notas</span></div>
-                  {deal.notes?.scripts?.map((s) => (
-                    <div key={s.id} className="flex items-start gap-1.5 mb-1.5">
-                      <FileText size={12} color={MUTED} style={{ flexShrink: 0, marginTop: 2 }} />
-                      <span className="text-xs whitespace-pre-wrap" style={{ color: MUTED }}>{s.text}</span>
-                    </div>
-                  ))}
-                  {deal.notes?.links?.map((l) => (
-                    <div key={l.id} className="flex items-center gap-1.5 mb-1.5">
-                      <Link2 size={12} color={MUTED} style={{ flexShrink: 0 }} />
-                      <a href={l.url} target="_blank" rel="noreferrer" className="text-xs break-all" style={{ color: "#5BB8E8" }}>{l.url}</a>
-                    </div>
-                  ))}
-                  {deal.notes?.notas?.trim() && <div className="text-xs mt-1" style={{ color: MUTED }}>{deal.notes.notas}</div>}
-                </div>
-              )}
             </div>
           );
         })}
       </div>
+
+      {/* pencil modal: full deal detail, view or edit */}
+      {detailDeal && draft && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "#000000CC" }}>
+          <div className="w-full rounded-t-2xl p-5" style={{ background: SURFACE, border: `1px solid ${BORDER}`, maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-display font-bold text-lg">{editMode ? "Editar contrato" : "Ver contrato"}</span>
+              <button onClick={() => setDetailDeal(null)}><X size={20} color={MUTED} /></button>
+            </div>
+            {!editMode && <div className="flex items-center gap-1.5 mb-4 text-[11px]" style={{ color: MUTED }}><Lock size={12} /> Solo lectura</div>}
+            {editMode && <div className="mb-4" />}
+
+            <div className="flex flex-col gap-3">
+              <Field label="Marca / cliente" muted={MUTED}>
+                <input value={draft.marca} disabled={!editMode} onChange={(e) => setDraft({ ...draft, marca: e.target.value })} style={inputStyle(!editMode)} />
+              </Field>
+              <Field label="Producto" muted={MUTED}>
+                <input value={draft.producto} disabled={!editMode} onChange={(e) => setDraft({ ...draft, producto: e.target.value })} style={inputStyle(!editMode)} />
+              </Field>
+              <div className="flex gap-3">
+                <Field label="Precio (USD)" muted={MUTED}>
+                  <input type="number" value={draft.precio} disabled={!editMode} onChange={(e) => setDraft({ ...draft, precio: e.target.value })} style={inputStyle(!editMode)} />
+                </Field>
+                <Field label="Videos" muted={MUTED}>
+                  <input type="number" value={draft.videos} disabled={!editMode} onChange={(e) => setDraft({ ...draft, videos: e.target.value })} style={inputStyle(!editMode)} />
+                </Field>
+              </div>
+              <Field label="WhatsApp" muted={MUTED}>
+                <input value={draft.telefono} disabled={!editMode} onChange={(e) => setDraft({ ...draft, telefono: e.target.value })} style={inputStyle(!editMode)} />
+              </Field>
+              <Field label="Email" muted={MUTED}>
+                <input value={draft.email} disabled={!editMode} onChange={(e) => setDraft({ ...draft, email: e.target.value })} style={inputStyle(!editMode)} />
+              </Field>
+              <Field label="Categoría" muted={MUTED}>
+                <div className="flex gap-2 flex-wrap">
+                  {CATEGORIES.map((c) => (
+                    <button key={c.key} disabled={!editMode} onClick={() => editMode && setDraft({ ...draft, categoria: c.key })} className="px-3 py-1.5 rounded-lg text-xs font-medium" style={draft.categoria === c.key ? { background: c.color, color: "#0B0E14" } : { background: BG, color: MUTED }}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            {editMode ? (
+              <button onClick={saveDetail} className="w-full mt-5 py-3 rounded-xl font-semibold text-sm" style={{ background: GOLD, color: "#1A1608" }}>
+                Guardar cambios
+              </button>
+            ) : (
+              <button onClick={() => setDetailDeal(null)} className="w-full mt-5 py-3 rounded-xl font-semibold text-sm" style={{ background: BORDER, color: MUTED }}>
+                Cerrar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* book modal: notes, view or edit */}
+      {notesDeal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "#000000CC" }}>
+          <div className="w-full rounded-t-2xl p-5" style={{ background: SURFACE, border: `1px solid ${BORDER}`, maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2"><BookOpen size={16} color={GOLD} /><span className="font-display font-bold text-base">Notas</span></div>
+              <button onClick={() => setNotesDeal(null)}><X size={20} color={MUTED} /></button>
+            </div>
+            <div className="text-xs mb-1" style={{ color: MUTED }}>{notesDeal.marca || "Sin nombre"}</div>
+            {!editMode && <div className="flex items-center gap-1.5 mb-4 text-[11px]" style={{ color: MUTED }}><Lock size={12} /> Solo lectura</div>}
+            {editMode && <div className="mb-4" />}
+
+            <div className="flex items-center gap-1.5 mb-2"><FileText size={13} color={GOLD} /><span className="text-xs font-semibold">Escritos</span></div>
+            <div className="flex flex-col gap-2 mb-2">
+              {(notesDeal.notes?.scripts || []).map((s) => (
+                <div key={s.id} className="rounded-lg p-2.5 flex items-start justify-between gap-2" style={{ background: BG, border: `1px solid ${BORDER}` }}>
+                  <span className="text-xs whitespace-pre-wrap" style={{ lineHeight: 1.4 }}>{s.text}</span>
+                  {editMode && <button onClick={() => removeScript(s.id)} style={{ flexShrink: 0 }}><X size={13} color={MUTED} /></button>}
+                </div>
+              ))}
+              {(notesDeal.notes?.scripts || []).length === 0 && <div className="text-xs" style={{ color: MUTED }}>Sin escritos guardados.</div>}
+            </div>
+            {editMode && (
+              <div className="flex gap-2 mb-5">
+                <textarea value={newScript} onChange={(e) => setNewScript(e.target.value)} placeholder="Pega el escrito..." rows={2} style={{ ...inputStyle(false), flex: 1, resize: "vertical" }} />
+                <button onClick={addScript} className="px-3 rounded-xl flex items-center justify-center" style={{ background: GOLD, flexShrink: 0 }}><Plus size={16} color="#1A1608" /></button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 mb-2 mt-4"><Link2 size={13} color={GOLD} /><span className="text-xs font-semibold">Links de referencia</span></div>
+            <div className="flex flex-col gap-2 mb-2">
+              {(notesDeal.notes?.links || []).map((l) => (
+                <div key={l.id} className="rounded-lg p-2.5 flex items-center justify-between gap-2" style={{ background: BG, border: `1px solid ${BORDER}` }}>
+                  <a href={l.url} target="_blank" rel="noreferrer" className="text-xs break-all" style={{ color: "#5BB8E8" }}>{l.url}</a>
+                  {editMode && <button onClick={() => removeLink(l.id)} style={{ flexShrink: 0 }}><X size={13} color={MUTED} /></button>}
+                </div>
+              ))}
+              {(notesDeal.notes?.links || []).length === 0 && <div className="text-xs" style={{ color: MUTED }}>Sin links guardados.</div>}
+            </div>
+            {editMode && (
+              <div className="flex gap-2 mb-5">
+                <input value={newLink} onChange={(e) => setNewLink(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="https://tiktok.com/..." style={inputStyle(false)} />
+                <button onClick={addLink} className="px-3 rounded-xl flex items-center justify-center" style={{ background: GOLD, flexShrink: 0 }}><Plus size={16} color="#1A1608" /></button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 mb-2 mt-4"><BookOpen size={13} color={GOLD} /><span className="text-xs font-semibold">Notas</span></div>
+            {editMode ? (
+              <textarea value={notesDeal.notes?.notas || ""} onChange={(e) => updateNotes(notesDeal.id, { notas: e.target.value })} placeholder="Notas libres..." rows={4} style={{ ...inputStyle(false), width: "100%", resize: "vertical" }} />
+            ) : (
+              <div className="text-xs p-2.5 rounded-lg" style={{ background: BG, border: `1px solid ${BORDER}`, color: notesDeal.notes?.notas ? WHITE : MUTED, minHeight: 60 }}>
+                {notesDeal.notes?.notas || "Sin notas."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children, muted }) {
+  return (
+    <div className="flex-1">
+      <div className="text-[11.5px] mb-1.5" style={{ color: muted }}>{label}</div>
+      {children}
     </div>
   );
 }
