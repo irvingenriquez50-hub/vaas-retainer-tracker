@@ -47,6 +47,10 @@ const STRINGS = {
   links_title: { es: "Links de referencia (TikTok, etc.)", en: "Reference links (TikTok, etc.)" },
   notes_placeholder: { es: "Ej. Ocupa revisión antes de postear...", en: "E.g. Needs review before posting..." },
   save_error: { es: "No se pudo guardar. Intenta de nuevo.", en: "Couldn't save. Try again." },
+  collab_one: { es: "colaboración", en: "collaboration" },
+  collab_many: { es: "colaboraciones", en: "collaborations" },
+  video_one: { es: "video", en: "video" },
+  video_many: { es: "videos", en: "videos" },
 };
 
 const STAGE_KEYS = ["no_solicitado", "solicitado", "llego", "en_progreso", "posteado", "pagado"];
@@ -157,11 +161,15 @@ export default function Dashboard() {
 
   const counts = useMemo(() => {
     const revision = monthDeals.filter((d) => d.status === "revision").length;
-    const pendiente = monthDeals.filter((d) => !["pagado", "revision", "eliminado"].includes(d.status)).reduce((s, d) => s + Number(d.precio || 0), 0);
-    const pagado = monthDeals.filter((d) => d.status === "pagado").reduce((s, d) => s + Number(d.precio || 0), 0);
-    const activos = monthDeals.filter((d) => !["pagado", "revision", "eliminado"].includes(d.status)).length;
+    const pendienteDeals = monthDeals.filter((d) => !["pagado", "revision", "eliminado"].includes(d.status));
+    const pagadoDeals = monthDeals.filter((d) => d.status === "pagado");
+    const pendiente = pendienteDeals.reduce((s, d) => s + Number(d.precio || 0), 0);
+    const pagado = pagadoDeals.reduce((s, d) => s + Number(d.precio || 0), 0);
+    const pendienteVideos = pendienteDeals.reduce((s, d) => s + Number(d.videos || 0), 0);
+    const pagadoVideos = pagadoDeals.reduce((s, d) => s + Number(d.videos || 0), 0);
+    const activos = pendienteDeals.length;
     const eliminados = monthDeals.filter((d) => d.status === "eliminado").length;
-    return { revision, pendiente, pagado, activos, eliminados };
+    return { revision, pendiente, pagado, activos, eliminados, pendienteColabs: pendienteDeals.length, pagadoColabs: pagadoDeals.length, pendienteVideos, pagadoVideos };
   }, [monthDeals]);
 
   const filtered = useMemo(() => {
@@ -301,10 +309,16 @@ export default function Dashboard() {
           <div className="flex-1 rounded-xl px-3 py-2.5" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
             <div className="text-[11px]" style={{ color: MUTED }}>{t("pending_collect")}</div>
             <div className="font-mono-vaas text-lg font-semibold vaas-gold-text">{money(counts.pendiente)}</div>
+            <div className="font-mono-vaas text-[10.5px] mt-1" style={{ color: MUTED }}>
+              {counts.pendienteColabs} {counts.pendienteColabs === 1 ? t("collab_one") : t("collab_many")} · {counts.pendienteVideos} {counts.pendienteVideos === 1 ? t("video_one") : t("video_many")}
+            </div>
           </div>
           <div className="flex-1 rounded-xl px-3 py-2.5" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
             <div className="text-[11px]" style={{ color: MUTED }}>{t("collected")}</div>
             <div className="font-mono-vaas text-lg font-semibold" style={{ color: "#34D399" }}>{money(counts.pagado)}</div>
+            <div className="font-mono-vaas text-[10.5px] mt-1" style={{ color: MUTED }}>
+              {counts.pagadoColabs} {counts.pagadoColabs === 1 ? t("collab_one") : t("collab_many")} · {counts.pagadoVideos} {counts.pagadoVideos === 1 ? t("video_one") : t("video_many")}
+            </div>
           </div>
         </div>
 
@@ -450,9 +464,23 @@ export default function Dashboard() {
           const cat = deal.categoria ? catInfo(deal.categoria) : null;
           const stageColor = STAGE_COLORS[deal.status] || GOLD_DIM;
           const tz = TZ_INFO[deal.timezone || "china"];
+          const urgentPayment = deal.status === "posteado";
 
           return (
-            <div key={deal.id} className="rounded-xl p-4" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${stageColor}` }}>
+            <div
+              key={deal.id}
+              className="rounded-xl p-4"
+              style={
+                urgentPayment
+                  ? {
+                      background: "linear-gradient(180deg, rgba(229,72,77,0.14) 0%, rgba(14,14,12,1) 55%)",
+                      border: "1px solid #E5484D",
+                      borderLeft: "3px solid #E5484D",
+                      boxShadow: "0 0 18px rgba(229,72,77,0.25)",
+                    }
+                  : { background: SURFACE, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${stageColor}` }
+              }
+            >
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
