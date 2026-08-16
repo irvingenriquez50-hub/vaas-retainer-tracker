@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
 import {
-  Plus, Pencil, Trash2, MessageCircle, Mail, X, ChevronRight, ChevronLeft,
+  Plus, Minus, Pencil, Trash2, MessageCircle, Mail, X, ChevronRight, ChevronLeft,
   Check, Ban, Calendar, BookOpen, Link2, FileText, RotateCcw, XCircle,
   Languages, LogOut, ShieldCheck,
 } from "lucide-react";
@@ -247,6 +247,14 @@ export default function Dashboard() {
     loadDeals();
   };
 
+  const updateVideosEntregados = async (deal, delta) => {
+    const current = deal.videos_entregados || 0;
+    const next = Math.max(0, Math.min(Number(deal.videos || 0), current + delta));
+    if (next === current) return;
+    await supabase.from("deals").update({ videos_entregados: next }).eq("id", deal.id);
+    loadDeals();
+  };
+
   const notesDeal = (deals || []).find((d) => d.id === notesDealId) || null;
   const updateNotes = async (dealId, patch) => {
     const current = (deals || []).find((d) => d.id === dealId);
@@ -465,6 +473,7 @@ export default function Dashboard() {
           const stageColor = STAGE_COLORS[deal.status] || GOLD_DIM;
           const tz = TZ_INFO[deal.timezone || "china"];
           const urgentPayment = deal.status === "posteado";
+          const entregados = deal.videos_entregados || 0;
 
           return (
             <div
@@ -505,7 +514,30 @@ export default function Dashboard() {
 
               <div className="flex items-center gap-4 mt-3 flex-wrap">
                 <span className="vaas-gold-text font-mono-vaas text-base font-semibold">{money(deal.precio)}</span>
-                <span className="text-xs" style={{ color: MUTED }}>🎥 {deal.videos} videos</span>
+
+                <div className="flex items-center gap-1.5" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "3px 6px" }}>
+                  <span className="text-xs">🎥</span>
+                  <button
+                    onClick={() => updateVideosEntregados(deal, -1)}
+                    disabled={entregados <= 0}
+                    className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                    style={{ background: BORDER, opacity: entregados <= 0 ? 0.4 : 1 }}
+                  >
+                    <Minus size={11} color={MUTED} />
+                  </button>
+                  <span className="text-xs font-mono-vaas font-semibold" style={{ color: WHITE, minWidth: 44, textAlign: "center" }}>
+                    {entregados}/{deal.videos} videos
+                  </span>
+                  <button
+                    onClick={() => updateVideosEntregados(deal, 1)}
+                    disabled={entregados >= Number(deal.videos || 0)}
+                    className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                    style={{ background: BORDER, opacity: entregados >= Number(deal.videos || 0) ? 0.4 : 1 }}
+                  >
+                    <Plus size={11} color={MUTED} />
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-3 ml-auto">
                   {waL && <a href={waL} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs" style={{ color: "#22D3C0" }}><MessageCircle size={13} /> WhatsApp</a>}
                   {deal.email && <a href={`mailto:${deal.email}`} className="flex items-center gap-1 text-xs" style={{ color: GOLD }}><Mail size={13} /> Email</a>}
