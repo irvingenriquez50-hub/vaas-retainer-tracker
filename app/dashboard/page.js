@@ -21,6 +21,8 @@ const STRINGS = {
   empty_activos: { es: "Sin contratos activos este mes. Toca + para agregar uno.", en: "No active contracts this month. Tap + to add one." },
   empty_pagados: { es: "Ningún contrato pagado este mes.", en: "No paid contracts this month." },
   empty_eliminados: { es: "Nada eliminado este mes.", en: "Nothing deleted this month." },
+  empty_filter: { es: "No hay contratos en este filtro.", en: "No contracts in this filter." },
+  filter_all: { es: "Todos", en: "All" },
   bot_closed: { es: "CERRADO POR EL BOT — REVISAR", en: "CLOSED BY THE BOT — REVIEW" },
   accept: { es: "Aceptar", en: "Accept" },
   reject: { es: "Rechazar", en: "Reject" },
@@ -65,6 +67,18 @@ const STAGE_LABELS = {
 };
 const stageIndex = (key) => STAGE_KEYS.indexOf(key);
 
+// Filtros de etapa dentro de la pestaña "Activos". "pagado" NO va aquí porque
+// esos viven en su propia pestaña. Se usan nombres cortos para que las
+// burbujas quepan bien en el teléfono; el color es el mismo de cada etapa.
+const FILTER_STAGE_KEYS = ["no_solicitado", "solicitado", "llego", "en_progreso", "posteado"];
+const STAGE_SHORT = {
+  no_solicitado: { es: "No solicitada", en: "Not requested" },
+  solicitado: { es: "Solicitada", en: "Requested" },
+  llego: { es: "Llegó", en: "Arrived" },
+  en_progreso: { es: "En progreso", en: "In progress" },
+  posteado: { es: "Publicado", en: "Posted" },
+};
+
 const CATEGORIES = [
   { key: "beauty", label: { es: "Beauty", en: "Beauty" }, color: "#E879A6" },
   { key: "health", label: { es: "Health/Suplementos", en: "Health/Supplements" }, color: "#D9B85C" },
@@ -103,6 +117,7 @@ export default function Dashboard() {
   const [profile, setProfile] = useState(null);
   const [deals, setDeals] = useState(null);
   const [tab, setTab] = useState("activos");
+  const [stageFilter, setStageFilter] = useState("todos");
   const [month, setMonth] = useState(monthKey());
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(new Date().getFullYear());
@@ -172,17 +187,36 @@ export default function Dashboard() {
     return { revision, pendiente, pagado, activos, eliminados, pendienteColabs: pendienteDeals.length, pagadoColabs: pagadoDeals.length, pendienteVideos, pagadoVideos };
   }, [monthDeals]);
 
+  // Cuántos contratos activos hay en cada etapa este mes — es lo que se muestra
+  // en el numerito de cada burbuja de filtro.
+  const stageCounts = useMemo(() => {
+    const activos = monthDeals.filter((d) => !["pagado", "revision", "eliminado"].includes(d.status));
+    const result = { todos: activos.length };
+    for (const d of activos) result[d.status] = (result[d.status] || 0) + 1;
+    return result;
+  }, [monthDeals]);
+
+  // Si la etapa filtrada se queda sin contratos (por ejemplo cambiaste de mes o
+  // moviste el último de esa etapa), el filtro se regresa solo a "Todos" para
+  // que nunca te quedes viendo una pantalla vacía sin saber por qué.
+  useEffect(() => {
+    if (stageFilter !== "todos" && (stageCounts[stageFilter] || 0) === 0) setStageFilter("todos");
+  }, [stageCounts, stageFilter]);
+
   const filtered = useMemo(() => {
     const base = monthDeals.filter((d) => {
       if (tab === "revision") return d.status === "revision";
-      if (tab === "activos") return !["pagado", "revision", "eliminado"].includes(d.status);
+      if (tab === "activos") {
+        if (["pagado", "revision", "eliminado"].includes(d.status)) return false;
+        return stageFilter === "todos" || d.status === stageFilter;
+      }
       if (tab === "eliminados") return d.status === "eliminado";
       return d.status === "pagado";
     });
     const q = query.trim().toLowerCase();
     const searched = q ? base.filter((d) => `${d.marca} ${d.producto}`.toLowerCase().includes(q)) : base;
     return [...searched].sort((a, b) => new Date(a.deleted_at || a.created_at) - new Date(b.deleted_at || b.created_at));
-  }, [monthDeals, tab, query]);
+  }, [monthDeals, tab, query, stageFilter]);
 
   const openAdd = () => {
     setDraft({ ...emptyDraft });
@@ -389,6 +423,40 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {tab === "activos" && (
+        <div className="px-5 mt-3 flex gap-1.5 flex-wrap">
+          {[
+            { key: "todos", label: t("filter_all"), color: GOLD },
+            ...FILTER_STAGE_KEYS.map((k) => ({ key: k, label: STAGE_SHORT[k][lang], color: STAGE_COLORS[k] })),
+          ].map((f) => {
+            const count = stageCounts[f.key] || 0;
+            const active = stageFilter === f.key;
+            const empty = count === 0 && f.key !== "todos";
+            return (
+              <button
+                key={f.key}
+                onClick={() => setStageFilter(f.key)}
+                disabled={empty}
+                className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full text-[11px] font-semibold"
+                style={
+                  active
+                    ? { background: f.color, color: "#0B0E14", border: `1px solid ${f.color}` }
+                    : { background: SURFACE, color: f.color, border: `1px solid ${f.color}38`, opacity: empty ? 0.35 : 1 }
+                }
+              >
+                {f.label}
+                <span
+                  className="px-1.5 rounded-full text-[10px] font-bold"
+                  style={active ? { background: "#0B0E1426", color: "#0B0E14" } : { background: `${f.color}1F`, color: f.color }}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {tab !== "revision" && tab !== "eliminados" && (
         <div className="px-5 mt-3">
           <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
@@ -404,7 +472,7 @@ export default function Dashboard() {
         {deals !== null && filtered.length === 0 && (
           <div className="text-sm text-center py-10" style={{ color: MUTED }}>
             {tab === "revision" && t("empty_revision")}
-            {tab === "activos" && t("empty_activos")}
+            {tab === "activos" && (stageFilter === "todos" ? t("empty_activos") : t("empty_filter"))}
             {tab === "pagados" && t("empty_pagados")}
             {tab === "eliminados" && t("empty_eliminados")}
           </div>
