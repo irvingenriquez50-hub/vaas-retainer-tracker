@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
-import { ArrowLeft, Trash2, ShieldOff } from "lucide-react";
+import { ArrowLeft, Trash2, ShieldOff, Search, ChevronRight } from "lucide-react";
 
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n || 0);
 
@@ -58,6 +58,23 @@ export default function AdminPage() {
           <div className="font-display font-bold text-lg">Panel de Admin</div>
           <div className="text-xs" style={{ color: MUTED }}>Todos los usuarios de VAAS Retainer Tracker</div>
         </div>
+      </div>
+
+      <div className="px-5 mt-4">
+        <button
+          onClick={() => router.push("/admin/contactos")}
+          className="w-full rounded-xl p-4 flex items-center gap-3 active:opacity-70"
+          style={{ background: SURFACE, border: `1px solid ${GOLD}44` }}
+        >
+          <div className="p-2 rounded-lg flex-shrink-0" style={{ background: `${GOLD}22` }}>
+            <Search size={16} color={GOLD} />
+          </div>
+          <div className="flex-1 text-left min-w-0">
+            <div className="font-medium text-sm">Contactos propios</div>
+            <div className="text-xs" style={{ color: MUTED }}>Contratos que no salieron de la lista de Discord</div>
+          </div>
+          <ChevronRight size={16} color={MUTED} />
+        </button>
       </div>
 
       {error && <div className="mx-5 mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "#2A1620", color: "#F19999" }}>{error}</div>}
