@@ -33,12 +33,20 @@ const shortDate = (iso) => {
 };
 const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
 
-/** La llave con la que se recuerda en qué etapa va cada contacto. Para los que
- * tienen número se usan sus últimos 8 dígitos (así da igual cómo esté escrito);
- * los que solo tienen correo se recuerdan por el id de su contrato. */
+/** La llave con la que se recuerda en qué etapa va cada contacto.
+ *
+ * LLEVA EL user_id ADENTRO A PROPÓSITO. Antes la llave era solo el número, y eso
+ * causaba un cruce feo: si dos miembros tenían el mismo contacto (pasa seguido
+ * con marcas grandes), compartían la misma marca — mover el de uno movía el del
+ * otro, y aparecían contactos "de la nada" en la lista de alguien más. Con el
+ * miembro adentro, lo de cada quien queda totalmente aislado.
+ *
+ * Para los que tienen número se usan sus últimos 8 dígitos (así da igual cómo
+ * esté escrito); los que solo tienen correo se recuerdan por el id de su contrato. */
 function markKey(deal) {
   const digits = digitsOf(deal.telefono);
-  return digits.length >= 7 ? digits.slice(-8) : `deal:${deal.id}`;
+  const tail = digits.length >= 7 ? digits.slice(-8) : `deal:${deal.id}`;
+  return `${deal.user_id}:${tail}`;
 }
 
 /** El bloque en el formato EXACTO que lee el bot de Discord, listo para pegar
@@ -149,13 +157,26 @@ export default function AdminContactosPage() {
   };
 
   // ─── Cálculo de las listas ────────────────────────────────────────────
-  const { groups, counts } = useMemo(() => {
-    if (!profiles || !deals || !discord) return { groups: null, counts: { revisar: 0, por_mandar: 0, mandado: 0 } };
+  const { groups, counts, dupTotal } = useMemo(() => {
+    if (!profiles || !deals || !discord) return { groups: null, counts: { revisar: 0, por_mandar: 0, mandado: 0 }, dupTotal: 0 };
 
     const inDiscord = new Set(discord.phones);
     const cutoff = Date.now() - DEALS_DAYS * 24 * 60 * 60 * 1000;
     const nameOf = new Map(profiles.map((p) => [p.id, p.full_name || p.email || "Sin nombre"]));
     const q = query.trim().toLowerCase();
+
+    // Primera pasada: qué miembros tienen cada número. Sirve para avisar cuando
+    // dos personas distintas están trabajando el mismo contacto — así, si ves un
+    // número repetido, sabes que es una colisión real y no que se revolvió algo.
+    const ownersByPhone = new Map();
+    for (const d of deals) {
+      if (d.status === "eliminado") continue;
+      const dg = digitsOf(d.telefono);
+      if (dg.length < 7) continue;
+      const k = dg.slice(-8);
+      if (!ownersByPhone.has(k)) ownersByPhone.set(k, new Set());
+      ownersByPhone.get(k).add(d.user_id);
+    }
 
     const tally = { revisar: 0, por_mandar: 0, mandado: 0 };
     const byUser = new Map();
@@ -185,14 +206,45 @@ export default function AdminContactosPage() {
       const name = nameOf.get(d.user_id) || "Sin nombre";
       if (q && ![name, d.marca, d.producto, d.telefono, d.email].some((v) => (v || "").toLowerCase().includes(q))) continue;
 
+      const sharedWith = digits.length >= 7
+        ? [...(ownersByPhone.get(digits.slice(-8)) || [])]
+            .filter((u) => u !== d.user_id)
+            .map((u) => nameOf.get(u) || "otro miembro")
+        : [];
+
       if (!byUser.has(d.user_id)) byUser.set(d.user_id, { userId: d.user_id, name, items: [] });
-      byUser.get(d.user_id).items.push({ ...d, unverifiable });
+      byUser.get(d.user_id).items.push({ ...d, unverifiable, sharedWith });
     }
 
     const list = [...byUser.values()];
     for (const g of list) g.items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     list.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
-    return { groups: list, counts: tally };
+
+    // Repetidos DENTRO de esta misma pestaña. Es el aviso importante: si el
+    // mismo número está en la fila de dos miembros, al copiar de los dos lo
+    // mandarías dos veces al Discord. Estos se pintan en naranja.
+    const seen = new Map();
+    for (const g of list) {
+      for (const it of g.items) {
+        const dg = digitsOf(it.telefono);
+        if (dg.length < 7) continue;
+        const k = dg.slice(-8);
+        if (!seen.has(k)) seen.set(k, []);
+        seen.get(k).push(g.name);
+      }
+    }
+    let dupTotal = 0;
+    for (const g of list) {
+      for (const it of g.items) {
+        const dg = digitsOf(it.telefono);
+        const names = dg.length >= 7 ? seen.get(dg.slice(-8)) || [] : [];
+        it.isDup = names.length > 1;
+        it.dupWith = [...new Set(names.filter((n) => n !== g.name))];
+        if (it.isDup) dupTotal += 1;
+      }
+    }
+
+    return { groups: list, counts: tally, dupTotal };
   }, [profiles, deals, discord, marks, view, query]);
 
   const copy = async (text, id) => {
@@ -285,6 +337,36 @@ export default function AdminContactosPage() {
       <div className="px-4 mt-3 flex flex-col gap-3">
         {loading && <div className="text-sm text-center py-10" style={{ color: MUTED }}>Revisando la lista de Discord...</div>}
 
+        {!loading && dupTotal > 0 && (
+          <div className="rounded-xl px-3 py-2.5 flex items-center gap-2" style={{ background: "#F2994A14", border: "1px solid #F2994A66" }}>
+            <AlertTriangle size={15} color="#F2994A" style={{ flexShrink: 0 }} />
+            <div className="flex-1 min-w-0 text-[11.5px]" style={{ color: "#F2994A" }}>
+              <span className="font-bold">{dupTotal} repetidos</span> — el mismo número aparece más de una vez aquí.
+            </div>
+            <button
+              onClick={() => {
+                const vistos = new Set();
+                const bloques = [];
+                for (const g of groups || []) {
+                  for (const it of g.items) {
+                    const dg = digitsOf(it.telefono);
+                    const k = dg.length >= 7 ? dg.slice(-8) : `deal:${it.id}`;
+                    if (vistos.has(k)) continue;
+                    vistos.add(k);
+                    bloques.push(discordBlock(it));
+                  }
+                }
+                copy(bloques.join("\n\n"), "dedupe");
+              }}
+              className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 flex-shrink-0"
+              style={{ background: "#F2994A", color: "#1A1608" }}
+              title="Copia todos los de esta pestaña, contando cada número una sola vez"
+            >
+              {copiedId === "dedupe" ? <><Check size={11} /> Copiado</> : <><Copy size={11} /> Sin repetir</>}
+            </button>
+          </div>
+        )}
+
         {!loading && groups !== null && groups.length === 0 && (
           <div className="text-[13px] text-center py-10 px-4" style={{ color: MUTED }}>{emptyMsg}</div>
         )}
@@ -313,8 +395,23 @@ export default function AdminContactosPage() {
 
               {!isCollapsed && g.items.map((d, i) => {
                 const waDigits = digitsOf(d.telefono);
+                const dup = d.isDup && view !== "mandado";
                 return (
-                  <div key={d.id} className="px-3 py-2" style={i > 0 ? { borderTop: `1px solid ${BORDER}` } : undefined}>
+                  <div
+                    key={d.id}
+                    className="px-3 py-2"
+                    style={{
+                      ...(i > 0 ? { borderTop: `1px solid ${BORDER}` } : {}),
+                      ...(dup
+                        ? {
+                            background: "#F2994A14",
+                            borderLeft: "3px solid #F2994A",
+                            paddingLeft: 9,
+                            boxShadow: "inset 0 0 14px rgba(242,153,74,0.10)",
+                          }
+                        : {}),
+                    }}
+                  >
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono-vaas text-[12px] font-semibold min-w-0 truncate flex-1">{d.telefono || d.email || "—"}</span>
                       <span className="font-mono-vaas text-[10px] flex-shrink-0" style={{ color: MUTED }}>{shortDate(d.created_at)}</span>
@@ -368,6 +465,18 @@ export default function AdminContactosPage() {
                       {` · ${d.videos || 0} vid`}
                       {d.unverifiable ? " · ⚠️ solo correo, no verificable" : ""}
                     </div>
+
+                    {dup ? (
+                      <div className="text-[10px] mt-1 font-bold truncate" style={{ color: "#F2994A" }}>
+                        ⚠️ REPETIDO — {d.dupWith.length > 0
+                          ? `este mismo número también está aquí en la lista de ${d.dupWith.join(", ")}. Mándalo una sola vez.`
+                          : "este mismo número está dos veces en esta lista. Mándalo una sola vez."}
+                      </div>
+                    ) : d.sharedWith?.length > 0 ? (
+                      <div className="text-[10px] mt-1 truncate" style={{ color: MUTED }}>
+                        Este número también lo tiene {d.sharedWith.join(", ")}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
