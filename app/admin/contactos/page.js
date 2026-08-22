@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
 import {
   ArrowLeft, RefreshCw, Copy, Check, MessageCircle, Mail, AlertTriangle,
-  ChevronDown, ChevronUp, Undo2, Search,
+  ChevronDown, ChevronUp, Undo2, Search, Send,
 } from "lucide-react";
 import { getDiscordPhones } from "./actions";
 
@@ -16,6 +16,15 @@ const DEALS_DAYS = 30;
 // "propio" sin serlo. Con 60 días eso no pasa.
 const DISCORD_DAYS = 60;
 
+// Las tres etapas. Un contacto sin marca guardada está en "revisar" — ahí caen
+// todos los nuevos. De ahí Irving los mueve a "por_mandar" (ya los revisó y
+// confirmó que faltan) o directo a "mandado" (resultó que ya estaban mandados).
+const VIEWS = [
+  { key: "revisar", label: "Por revisar", color: "#D6B860" },
+  { key: "por_mandar", label: "Por mandar", color: "#F2994A" },
+  { key: "mandado", label: "Ya mandados", color: "#34D399" },
+];
+
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n || 0);
 const shortDate = (iso) => {
   if (!iso) return "";
@@ -24,9 +33,9 @@ const shortDate = (iso) => {
 };
 const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
 
-/** La llave con la que se recuerda "este ya lo mandé". Para los que tienen
- * número se usan sus últimos 8 dígitos (así da igual cómo esté escrito); los
- * que solo tienen correo se recuerdan por el id de su contrato. */
+/** La llave con la que se recuerda en qué etapa va cada contacto. Para los que
+ * tienen número se usan sus últimos 8 dígitos (así da igual cómo esté escrito);
+ * los que solo tienen correo se recuerdan por el id de su contrato. */
 function markKey(deal) {
   const digits = digitsOf(deal.telefono);
   return digits.length >= 7 ? digits.slice(-8) : `deal:${deal.id}`;
@@ -52,12 +61,12 @@ export default function AdminContactosPage() {
   const [profiles, setProfiles] = useState(null);
   const [deals, setDeals] = useState(null);
   const [discord, setDiscord] = useState(null);
-  const [marks, setMarks] = useState(new Set());
+  const [marks, setMarks] = useState(new Map()); // phone_key -> "por_mandar" | "mandado"
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copiedId, setCopiedId] = useState(null);
   const [collapsed, setCollapsed] = useState({});
-  const [showMarked, setShowMarked] = useState(false);
+  const [view, setView] = useState("revisar");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -74,8 +83,8 @@ export default function AdminContactosPage() {
   }, []);
 
   const loadMarks = async () => {
-    const { data } = await supabase.from("discord_sent_marks").select("phone_key");
-    setMarks(new Set((data || []).map((m) => m.phone_key)));
+    const { data } = await supabase.from("discord_sent_marks").select("phone_key,state");
+    setMarks(new Map((data || []).map((m) => [m.phone_key, m.state || "mandado"])));
   };
 
   const loadAll = async () => {
@@ -100,43 +109,56 @@ export default function AdminContactosPage() {
     setLoading(false);
   };
 
-  // ─── Marcar / desmarcar ───────────────────────────────────────────────
+  // ─── Mover un contacto de etapa ───────────────────────────────────────
   // OJO: esto SOLO escribe en la tabla discord_sent_marks, que existe nada más
   // para esta pantalla. NUNCA toca la tabla deals — los contratos de los
-  // miembros no se modifican ni se borran por marcar aquí.
-  const markSent = async (deal) => {
+  // miembros no se modifican ni se borran por mover nada aquí.
+  const moveTo = async (deal, state) => {
     const key = markKey(deal);
-    setMarks((prev) => new Set(prev).add(key)); // se ve al instante
+    const before = marks.get(key);
+    setMarks((prev) => new Map(prev).set(key, state)); // se ve al instante
+
     const { error } = await supabase
       .from("discord_sent_marks")
-      .upsert({ phone_key: key, phone_full: deal.telefono || deal.email || "", marked_by: me?.id || null }, { onConflict: "phone_key" });
+      .upsert(
+        { phone_key: key, phone_full: deal.telefono || deal.email || "", marked_by: me?.id || null, state },
+        { onConflict: "phone_key" }
+      );
+
     if (error) {
-      setMarks((prev) => { const n = new Set(prev); n.delete(key); return n; });
-      setError(`No se pudo guardar la marca: ${error.message}`);
+      setMarks((prev) => {
+        const n = new Map(prev);
+        if (before === undefined) n.delete(key); else n.set(key, before);
+        return n;
+      });
+      setError(`No se pudo guardar: ${error.message}`);
     }
   };
 
-  const unmark = async (deal) => {
+  // Regresa el contacto a "Por revisar" (borra su marca).
+  const backToReview = async (deal) => {
     const key = markKey(deal);
-    setMarks((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    const before = marks.get(key);
+    setMarks((prev) => { const n = new Map(prev); n.delete(key); return n; });
+
     const { error } = await supabase.from("discord_sent_marks").delete().eq("phone_key", key);
     if (error) {
-      setMarks((prev) => new Set(prev).add(key));
+      setMarks((prev) => new Map(prev).set(key, before));
       setError(`No se pudo deshacer: ${error.message}`);
     }
   };
 
-  // ─── Cálculo de la lista ──────────────────────────────────────────────
-  const { groups, markedCount } = useMemo(() => {
-    if (!profiles || !deals || !discord) return { groups: null, markedCount: 0 };
+  // ─── Cálculo de las listas ────────────────────────────────────────────
+  const { groups, counts } = useMemo(() => {
+    if (!profiles || !deals || !discord) return { groups: null, counts: { revisar: 0, por_mandar: 0, mandado: 0 } };
 
     const inDiscord = new Set(discord.phones);
     const cutoff = Date.now() - DEALS_DAYS * 24 * 60 * 60 * 1000;
     const nameOf = new Map(profiles.map((p) => [p.id, p.full_name || p.email || "Sin nombre"]));
     const q = query.trim().toLowerCase();
 
+    const tally = { revisar: 0, por_mandar: 0, mandado: 0 };
     const byUser = new Map();
-    let marked = 0;
 
     for (const d of deals) {
       if (d.status === "eliminado") continue;
@@ -154,9 +176,11 @@ export default function AdminContactosPage() {
         continue; // ni teléfono ni correo
       }
 
-      const isMarked = marks.has(markKey(d));
-      if (isMarked) marked += 1;
-      if (isMarked !== showMarked) continue;
+      // Los conteos de las tres pestañas se calculan siempre completos, sin que
+      // el buscador los altere — así el número de cada pestaña no baila.
+      const state = marks.get(markKey(d)) || "revisar";
+      tally[state] = (tally[state] || 0) + 1;
+      if (state !== view) continue;
 
       const name = nameOf.get(d.user_id) || "Sin nombre";
       if (q && ![name, d.marca, d.producto, d.telefono, d.email].some((v) => (v || "").toLowerCase().includes(q))) continue;
@@ -168,10 +192,8 @@ export default function AdminContactosPage() {
     const list = [...byUser.values()];
     for (const g of list) g.items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     list.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
-    return { groups: list, markedCount: marked };
-  }, [profiles, deals, discord, marks, showMarked, query]);
-
-  const total = useMemo(() => (groups || []).reduce((s, g) => s + g.items.length, 0), [groups]);
+    return { groups: list, counts: tally };
+  }, [profiles, deals, discord, marks, view, query]);
 
   const copy = async (text, id) => {
     try {
@@ -198,6 +220,12 @@ export default function AdminContactosPage() {
     );
   }
 
+  const emptyMsg = {
+    revisar: query ? "Nada coincide con la búsqueda." : `Nada por revisar — todos los contratos de los últimos ${DEALS_DAYS} días ya están clasificados.`,
+    por_mandar: query ? "Nada coincide con la búsqueda." : "Nada en la fila para mandar. Revisa la pestaña de la izquierda.",
+    mandado: query ? "Nada coincide con la búsqueda." : "Todavía no has marcado ninguno como mandado.",
+  }[view];
+
   return (
     <div className="min-h-screen pb-16" style={{ background: BG, color: WHITE }}>
       <div className="px-4 pt-5 pb-3" style={{ borderBottom: `1px solid ${BORDER}` }}>
@@ -217,26 +245,22 @@ export default function AdminContactosPage() {
         </div>
 
         <div className="flex gap-1.5 mt-2.5">
-          <button
-            onClick={() => setShowMarked(false)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-semibold"
-            style={!showMarked ? { background: GOLD, color: "#1A1608" } : { background: SURFACE, color: GOLD, border: `1px solid ${GOLD}38` }}
-          >
-            Por mandar
-            <span className="px-1.5 rounded-full text-[10px] font-bold" style={!showMarked ? { background: "#1A160826", color: "#1A1608" } : { background: `${GOLD}1F`, color: GOLD }}>
-              {showMarked ? "·" : total}
-            </span>
-          </button>
-          <button
-            onClick={() => setShowMarked(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-semibold"
-            style={showMarked ? { background: "#34D399", color: "#06110F" } : { background: SURFACE, color: "#34D399", border: "1px solid #34D39938" }}
-          >
-            Ya mandados
-            <span className="px-1.5 rounded-full text-[10px] font-bold" style={showMarked ? { background: "#06110F26", color: "#06110F" } : { background: "#34D3991F", color: "#34D399" }}>
-              {showMarked ? total : markedCount}
-            </span>
-          </button>
+          {VIEWS.map((v) => {
+            const active = view === v.key;
+            return (
+              <button
+                key={v.key}
+                onClick={() => setView(v.key)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-semibold"
+                style={active ? { background: v.color, color: "#0B0E14" } : { background: SURFACE, color: v.color, border: `1px solid ${v.color}38` }}
+              >
+                {v.label}
+                <span className="px-1.5 rounded-full text-[10px] font-bold" style={active ? { background: "#0B0E1426", color: "#0B0E14" } : { background: `${v.color}1F`, color: v.color }}>
+                  {counts[v.key] || 0}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 mt-2" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
@@ -262,13 +286,7 @@ export default function AdminContactosPage() {
         {loading && <div className="text-sm text-center py-10" style={{ color: MUTED }}>Revisando la lista de Discord...</div>}
 
         {!loading && groups !== null && groups.length === 0 && (
-          <div className="text-[13px] text-center py-10 px-4" style={{ color: MUTED }}>
-            {query
-              ? "Nada coincide con la búsqueda."
-              : showMarked
-              ? "Todavía no has marcado ninguno como mandado."
-              : `Todo al día — todos los contratos de los últimos ${DEALS_DAYS} días salieron de la lista de Discord.`}
-          </div>
+          <div className="text-[13px] text-center py-10 px-4" style={{ color: MUTED }}>{emptyMsg}</div>
         )}
 
         {!loading && (groups || []).map((g) => {
@@ -281,7 +299,7 @@ export default function AdminContactosPage() {
                   <span className="font-display font-bold text-[13px] truncate">{g.name}</span>
                   <span className="px-1.5 rounded-full text-[10px] font-bold flex-shrink-0" style={{ background: `${GOLD}22`, color: GOLD }}>{g.items.length}</span>
                 </button>
-                {!showMarked && (
+                {view !== "mandado" && (
                   <button
                     onClick={() => copy(g.items.map(discordBlock).join("\n\n"), `all_${g.userId}`)}
                     className="px-2 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1 flex-shrink-0"
@@ -297,9 +315,15 @@ export default function AdminContactosPage() {
                 const waDigits = digitsOf(d.telefono);
                 return (
                   <div key={d.id} className="px-3 py-2" style={i > 0 ? { borderTop: `1px solid ${BORDER}` } : undefined}>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <span className="font-mono-vaas text-[12px] font-semibold min-w-0 truncate flex-1">{d.telefono || d.email || "—"}</span>
                       <span className="font-mono-vaas text-[10px] flex-shrink-0" style={{ color: MUTED }}>{shortDate(d.created_at)}</span>
+
+                      {view === "revisar" && (
+                        <button onClick={() => moveTo(d, "por_mandar")} className="px-1.5 py-1 rounded flex items-center gap-1 text-[10px] font-bold flex-shrink-0" style={{ background: "#F2994A1F", color: "#F2994A" }} title="Todavía no lo mandamos — pásalo a Por mandar">
+                          <Send size={10} /> PM
+                        </button>
+                      )}
 
                       {waDigits.length >= 7 && (
                         <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noreferrer" className="p-1 rounded flex-shrink-0" style={{ background: "#22D3C01F" }} title="Abrir en WhatsApp">
@@ -312,16 +336,24 @@ export default function AdminContactosPage() {
                         </a>
                       )}
 
-                      {showMarked ? (
-                        <button onClick={() => unmark(d)} className="px-1.5 py-1 rounded flex items-center gap-1 text-[10px] font-semibold flex-shrink-0" style={{ background: "#F2994A1F", color: "#F2994A" }} title="Quitar la marca — vuelve a Por mandar">
+                      {view !== "mandado" && (
+                        <button onClick={() => copy(discordBlock(d), d.id)} className="p-1 rounded flex-shrink-0" style={{ background: `${GOLD}1F` }} title="Copiar en el formato de Discord">
+                          {copiedId === d.id ? <Check size={12} color={GOLD} /> : <Copy size={12} color={GOLD} />}
+                        </button>
+                      )}
+
+                      {view === "mandado" ? (
+                        <button onClick={() => backToReview(d)} className="px-1.5 py-1 rounded flex items-center gap-1 text-[10px] font-semibold flex-shrink-0" style={{ background: "#F2994A1F", color: "#F2994A" }} title="Quitar la marca — regresa a Por revisar">
                           <Undo2 size={11} /> Deshacer
                         </button>
                       ) : (
                         <>
-                          <button onClick={() => copy(discordBlock(d), d.id)} className="p-1 rounded flex-shrink-0" style={{ background: `${GOLD}1F` }} title="Copiar en el formato de Discord">
-                            {copiedId === d.id ? <Check size={12} color={GOLD} /> : <Copy size={12} color={GOLD} />}
-                          </button>
-                          <button onClick={() => markSent(d)} className="px-1.5 py-1 rounded flex items-center gap-1 text-[10px] font-semibold flex-shrink-0" style={{ background: "#34D3991F", color: "#34D399" }} title="Ya lo mandé al Discord — quítalo de esta lista">
+                          {view === "por_mandar" && (
+                            <button onClick={() => backToReview(d)} className="p-1 rounded flex-shrink-0" style={{ background: "#8C857420" }} title="Regresar a Por revisar">
+                              <Undo2 size={12} color={MUTED} />
+                            </button>
+                          )}
+                          <button onClick={() => moveTo(d, "mandado")} className="px-1.5 py-1 rounded flex items-center gap-1 text-[10px] font-bold flex-shrink-0" style={{ background: "#34D3991F", color: "#34D399" }} title="Ya está en la lista de Discord">
                             <Check size={11} /> Ya
                           </button>
                         </>
@@ -329,7 +361,7 @@ export default function AdminContactosPage() {
                     </div>
 
                     <div className="text-[10.5px] mt-0.5 truncate" style={{ color: MUTED }}>
-                      {d.marca || "Sin marca"}
+                      {g.name} · {d.marca || "Sin marca"}
                       {d.producto ? ` · ${d.producto}` : ""}
                       {` · `}
                       <span style={{ color: GOLD }}>{money(d.precio)}</span>
