@@ -25,6 +25,17 @@ const VIEWS = [
   { key: "mandado", label: "Ya mandados", color: "#34D399" },
 ];
 
+// Mini-tracker de avance de cada contacto en "Por mandar" — la misma barrita de
+// bolitas que tienen los contratos, pero para el trabajo de estos contactos.
+// Se guarda en discord_sent_marks (columna stage), NUNCA en los deals de nadie.
+const CONTACT_STAGES = [
+  { key: "sin_enviar", label: "Sin escribir", color: "#E5484D" },
+  { key: "enviado", label: "Mensaje enviado", color: "#F2994A" },
+  { key: "negociando", label: "Negociando", color: "#F2C94C" },
+  { key: "cerrado", label: "Trato cerrado", color: "#34D399" },
+];
+const contactStageIndex = (k) => Math.max(0, CONTACT_STAGES.findIndex((s) => s.key === k));
+
 const money = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(n || 0);
 const shortDate = (iso) => {
   if (!iso) return "";
@@ -69,7 +80,7 @@ export default function AdminContactosPage() {
   const [profiles, setProfiles] = useState(null);
   const [deals, setDeals] = useState(null);
   const [discord, setDiscord] = useState(null);
-  const [marks, setMarks] = useState(new Map()); // phone_key -> "por_mandar" | "mandado"
+  const [marks, setMarks] = useState(new Map()); // phone_key -> { state: "por_mandar" | "mandado", stage }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copiedId, setCopiedId] = useState(null);
@@ -91,8 +102,8 @@ export default function AdminContactosPage() {
   }, []);
 
   const loadMarks = async () => {
-    const { data } = await supabase.from("discord_sent_marks").select("phone_key,state");
-    setMarks(new Map((data || []).map((m) => [m.phone_key, m.state || "mandado"])));
+    const { data } = await supabase.from("discord_sent_marks").select("phone_key,state,stage");
+    setMarks(new Map((data || []).map((m) => [m.phone_key, { state: m.state || "mandado", stage: m.stage || "sin_enviar" }])));
   };
 
   const loadAll = async () => {
@@ -124,7 +135,7 @@ export default function AdminContactosPage() {
   const moveTo = async (deal, state) => {
     const key = markKey(deal);
     const before = marks.get(key);
-    setMarks((prev) => new Map(prev).set(key, state)); // se ve al instante
+    setMarks((prev) => new Map(prev).set(key, { state, stage: before?.stage || "sin_enviar" })); // se ve al instante
 
     const { error } = await supabase
       .from("discord_sent_marks")
@@ -153,6 +164,20 @@ export default function AdminContactosPage() {
     if (error) {
       setMarks((prev) => new Map(prev).set(key, before));
       setError(`No se pudo deshacer: ${error.message}`);
+    }
+  };
+
+  // Cambia la etapa del mini-tracker de un contacto en "Por mandar".
+  // Solo escribe la columna stage de discord_sent_marks — nada más.
+  const setStage = async (deal, stage) => {
+    const key = markKey(deal);
+    const before = marks.get(key);
+    if (!before) return; // solo aplica a contactos que ya tienen marca
+    setMarks((prev) => new Map(prev).set(key, { ...before, stage }));
+    const { error } = await supabase.from("discord_sent_marks").update({ stage }).eq("phone_key", key);
+    if (error) {
+      setMarks((prev) => new Map(prev).set(key, before));
+      setError(`No se pudo guardar la etapa: ${error.message}`);
     }
   };
 
@@ -199,7 +224,8 @@ export default function AdminContactosPage() {
 
       // Los conteos de las tres pestañas se calculan siempre completos, sin que
       // el buscador los altere — así el número de cada pestaña no baila.
-      const state = marks.get(markKey(d)) || "revisar";
+      const mark = marks.get(markKey(d));
+      const state = mark?.state || "revisar";
       tally[state] = (tally[state] || 0) + 1;
       if (state !== view) continue;
 
@@ -213,7 +239,7 @@ export default function AdminContactosPage() {
         : [];
 
       if (!byUser.has(d.user_id)) byUser.set(d.user_id, { userId: d.user_id, name, items: [] });
-      byUser.get(d.user_id).items.push({ ...d, unverifiable, sharedWith });
+      byUser.get(d.user_id).items.push({ ...d, unverifiable, sharedWith, stage: mark?.stage || "sin_enviar" });
     }
 
     const list = [...byUser.values()];
@@ -465,6 +491,38 @@ export default function AdminContactosPage() {
                       {` · ${d.videos || 0} vid`}
                       {d.unverifiable ? " · ⚠️ solo correo, no verificable" : ""}
                     </div>
+
+                    {view === "por_mandar" && (() => {
+                      const sIdx = contactStageIndex(d.stage);
+                      const sColor = CONTACT_STAGES[sIdx].color;
+                      return (
+                        <div className="mt-2">
+                          <div className="flex items-center">
+                            {CONTACT_STAGES.map((s, si) => (
+                              <div key={s.key} className="flex items-center flex-1">
+                                <button
+                                  onClick={() => setStage(d, s.key)}
+                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                  style={{ background: si <= sIdx ? CONTACT_STAGES[si].color : BORDER }}
+                                  title={s.label}
+                                />
+                                {si < CONTACT_STAGES.length - 1 && (
+                                  <div className="flex-1 h-[2px]" style={{ background: si < sIdx ? CONTACT_STAGES[si + 1].color : BORDER }} />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-[10px] font-semibold" style={{ color: sColor }}>{CONTACT_STAGES[sIdx].label}</span>
+                            {sIdx < CONTACT_STAGES.length - 1 && (
+                              <button onClick={() => setStage(d, CONTACT_STAGES[sIdx + 1].key)} className="text-[10px] font-medium" style={{ color: GOLD }}>
+                                Siguiente →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {dup ? (
                       <div className="text-[10px] mt-1 font-bold truncate" style={{ color: "#F2994A" }}>
