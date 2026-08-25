@@ -140,7 +140,16 @@ export default function AdminContactosPage() {
     const { error } = await supabase
       .from("discord_sent_marks")
       .upsert(
-        { phone_key: key, phone_full: deal.telefono || deal.email || "", marked_by: me?.id || null, state },
+        {
+          phone_key: key,
+          phone_full: deal.telefono || deal.email || "",
+          marked_by: me?.id || null,
+          state,
+          // Se manda la etapa EXPLÍCITA en vez de confiar en el valor por defecto
+          // de la base — así el guardado no depende de cómo esté configurada la
+          // columna del lado de Supabase.
+          stage: before?.stage || "sin_enviar",
+        },
         { onConflict: "phone_key" }
       );
 
@@ -150,7 +159,9 @@ export default function AdminContactosPage() {
         if (before === undefined) n.delete(key); else n.set(key, before);
         return n;
       });
-      setError(`No se pudo guardar: ${error.message}`);
+      const msg = `No se pudo guardar el cambio de ${deal.telefono || deal.email || "este contacto"}:\n\n${error.message}`;
+      setError(msg);
+      window.alert(`⚠️ ${msg}\n\nPor eso el contacto se regresó a su lugar.`);
     }
   };
 
@@ -163,7 +174,9 @@ export default function AdminContactosPage() {
     const { error } = await supabase.from("discord_sent_marks").delete().eq("phone_key", key);
     if (error) {
       setMarks((prev) => new Map(prev).set(key, before));
-      setError(`No se pudo deshacer: ${error.message}`);
+      const msg = `No se pudo deshacer: ${error.message}`;
+      setError(msg);
+      window.alert(`⚠️ ${msg}`);
     }
   };
 
@@ -177,7 +190,9 @@ export default function AdminContactosPage() {
     const { error } = await supabase.from("discord_sent_marks").update({ stage }).eq("phone_key", key);
     if (error) {
       setMarks((prev) => new Map(prev).set(key, before));
-      setError(`No se pudo guardar la etapa: ${error.message}`);
+      const msg = `No se pudo guardar la etapa: ${error.message}`;
+      setError(msg);
+      window.alert(`⚠️ ${msg}`);
     }
   };
 
