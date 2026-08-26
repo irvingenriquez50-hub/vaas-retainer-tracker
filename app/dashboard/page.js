@@ -55,11 +55,15 @@ const STRINGS = {
   video_many: { es: "videos", en: "videos" },
 };
 
-const STAGE_KEYS = ["no_solicitado", "solicitado", "llego", "en_progreso", "posteado", "pagado"];
-const STAGE_COLORS = { no_solicitado: "#E5484D", solicitado: "#F2994A", llego: "#F2C94C", en_progreso: "#C9D96B", posteado: "#8FD98F", pagado: "#34D399" };
+// "pendiente" va PRIMERO: es cuando la marca dijo que iba a confirmar los rates
+// con su jefe y todavía no hay nada acordado. Antes esos contactos se perdían
+// porque no tenían dónde vivir en el tablero.
+const STAGE_KEYS = ["pendiente", "no_solicitado", "solicitado", "llego", "en_progreso", "posteado", "pagado"];
+const STAGE_COLORS = { pendiente: "#9CA6B4", no_solicitado: "#E5484D", solicitado: "#F2994A", llego: "#F2C94C", en_progreso: "#C9D96B", posteado: "#8FD98F", pagado: "#34D399" };
 const STAGE_LABELS = {
-  no_solicitado: { es: "Muestra no solicitada", en: "Sample not requested" },
-  solicitado: { es: "Muestra solicitada", en: "Sample requested" },
+  pendiente: { es: "Pendiente de confirmar", en: "Pending confirmation" },
+  no_solicitado: { es: "No solicitado", en: "Sample not requested" },
+  solicitado: { es: "Solicitado", en: "Sample requested" },
   llego: { es: "Llegó", en: "Arrived" },
   en_progreso: { es: "En progreso", en: "In progress" },
   posteado: { es: "Publicado — pago pendiente", en: "Posted — payment pending" },
@@ -70,13 +74,14 @@ const stageIndex = (key) => STAGE_KEYS.indexOf(key);
 // Filtros de etapa dentro de la pestaña "Activos". "pagado" NO va aquí porque
 // esos viven en su propia pestaña. Se usan nombres cortos para que las
 // burbujas quepan bien en el teléfono; el color es el mismo de cada etapa.
-const FILTER_STAGE_KEYS = ["no_solicitado", "solicitado", "llego", "en_progreso", "posteado"];
+const FILTER_STAGE_KEYS = ["pendiente", "no_solicitado", "solicitado", "llego", "en_progreso", "posteado"];
 const STAGE_SHORT = {
-  no_solicitado: { es: "No solicitada", en: "Not requested" },
-  solicitado: { es: "Solicitada", en: "Requested" },
+  pendiente: { es: "Pendiente", en: "Pending" },
+  no_solicitado: { es: "No solicitado", en: "Not requested" },
+  solicitado: { es: "Solicitado", en: "Requested" },
   llego: { es: "Llegó", en: "Arrived" },
   en_progreso: { es: "En progreso", en: "In progress" },
-  posteado: { es: "Publicado", en: "Posted" },
+  posteado: { es: "Publicado, no pagado", en: "Posted, unpaid" },
 };
 
 const CATEGORIES = [
@@ -243,7 +248,7 @@ export default function Dashboard() {
       await supabase.from("deals").insert({
         user_id: user.id, marca: draft.marca, producto: draft.producto || "", categoria: draft.categoria || null,
         precio: Number(draft.precio), videos: Number(draft.videos), telefono: draft.telefono || "",
-        email: draft.email || "", timezone: draft.timezone || "china", status: "no_solicitado", mes: month,
+        email: draft.email || "", timezone: draft.timezone || "china", status: "pendiente", mes: month,
       });
     }
     setModalOpen(false);
