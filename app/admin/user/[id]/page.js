@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
 import {
@@ -142,6 +142,13 @@ export default function AdminUserDetail() {
   const [notesDeal, setNotesDeal] = useState(null); // book modal
   const [newScript, setNewScript] = useState("");
   const [newLink, setNewLink] = useState("");
+
+  // Mismo arreglo que en el dashboard del miembro: las notas se escriben contra
+  // un estado local y se guardan cuando dejas de teclear. Antes cada letra iba
+  // al servidor y React se comía caracteres al escribir rápido.
+  const [notasDraft, setNotasDraft] = useState("");
+  const [notasEstado, setNotasEstado] = useState("");
+  const notasSavedRef = useRef("");
 
   useEffect(() => {
     const savedLang = typeof window !== "undefined" ? localStorage.getItem("vaas-lang") : null;
@@ -310,6 +317,45 @@ export default function AdminUserDetail() {
   };
   const removeLink = (id) => updateNotes(notesDeal.id, { links: (notesDeal.notes?.links || []).filter((l) => l.id !== id) });
   const notesCount = (deal) => (deal.notes?.scripts?.length || 0) + (deal.notes?.links?.length || 0) + (deal.notes?.notas?.trim() ? 1 : 0);
+
+  // Al abrir las notas de un contrato, se carga lo que ya tenía guardado.
+  useEffect(() => {
+    const texto = notesDeal?.notes?.notas || "";
+    setNotasDraft(texto);
+    notasSavedRef.current = texto;
+    setNotasEstado("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesDeal?.id]);
+
+  // Se guarda solo, un segundo después de que dejas de escribir. En modo Ver no
+  // se guarda nada: updateNotes tiene su propio candado de editMode.
+  useEffect(() => {
+    if (!notesDeal?.id || !editMode) return;
+    if (notasDraft === notasSavedRef.current) return;
+    setNotasEstado("escribiendo");
+    const id = notesDeal.id;
+    const t = setTimeout(async () => {
+      const texto = notasDraft;
+      await updateNotes(id, { notas: texto });
+      notasSavedRef.current = texto;
+      setNotasEstado("guardado");
+      setTimeout(() => setNotasEstado((e) => (e === "guardado" ? "" : e)), 2000);
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notasDraft, notesDeal?.id, editMode]);
+
+  /** Cierra las notas guardando lo que falte, por si cerraste antes del segundo
+   * del guardado automático. */
+  const closeNotes = () => {
+    const id = notesDeal?.id;
+    const texto = notasDraft;
+    if (id && editMode && texto !== notasSavedRef.current) {
+      notasSavedRef.current = texto;
+      updateNotes(id, { notas: texto });
+    }
+    setNotesDeal(null);
+  };
 
   const waLink = (phone) => {
     const digits = (phone || "").replace(/[^0-9]/g, "");
@@ -723,7 +769,7 @@ export default function AdminUserDetail() {
           <div className="w-full rounded-t-2xl p-5" style={{ background: SURFACE, border: `1px solid ${BORDER}`, maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2"><BookOpen size={16} color={GOLD} /><span className="font-display font-bold text-base">{t("notes_title")}</span></div>
-              <button onClick={() => setNotesDeal(null)}><X size={20} color={MUTED} /></button>
+              <button onClick={closeNotes}><X size={20} color={MUTED} /></button>
             </div>
             <div className="text-xs mb-1" style={{ color: MUTED }}>{notesDeal.marca || t("no_name_yet")}</div>
             {!editMode && <div className="flex items-center gap-1.5 mb-4 text-[11px]" style={{ color: MUTED }}><Lock size={12} /> {t("read_only")}</div>}
@@ -765,7 +811,12 @@ export default function AdminUserDetail() {
 
             <div className="flex items-center gap-1.5 mb-2 mt-4"><BookOpen size={13} color={GOLD} /><span className="text-xs font-semibold">{t("notes_title")}</span></div>
             {editMode ? (
-              <textarea value={notesDeal.notes?.notas || ""} onChange={(e) => updateNotes(notesDeal.id, { notas: e.target.value })} placeholder={t("notes_placeholder")} rows={4} style={{ ...inputStyle(false), width: "100%", resize: "vertical" }} />
+              <>
+                <textarea value={notasDraft} onChange={(e) => setNotasDraft(e.target.value)} placeholder={t("notes_placeholder")} rows={4} style={{ ...inputStyle(false), width: "100%", resize: "vertical" }} />
+                <div className="text-[10.5px] mt-1 h-4" style={{ color: notasEstado === "guardado" ? "#34D399" : MUTED }}>
+                  {notasEstado === "escribiendo" ? "Escribiendo..." : notasEstado === "guardado" ? "Guardado ✓" : ""}
+                </div>
+              </>
             ) : (
               <div className="text-xs p-2.5 rounded-lg" style={{ background: BG, border: `1px solid ${BORDER}`, color: notesDeal.notes?.notas ? WHITE : MUTED, minHeight: 60 }}>
                 {notesDeal.notes?.notas || t("no_notes")}
