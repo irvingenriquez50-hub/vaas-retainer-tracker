@@ -550,7 +550,20 @@ export default function AdminUserDetail() {
                   <span className="vaas-gold-text font-mono-vaas text-lg font-bold">{money(deal.precio)}</span>
                   <span className="text-[13px]" style={{ color: MUTED }}>🎥 {deal.videos} videos</span>
                 </div>
-                <div className="font-mono-vaas text-xs mt-1" style={{ color: MUTED }}>{deal.telefono}</div>
+                {/* Mismo enlace de WhatsApp que en el dashboard del miembro. */}
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                  <span className="font-mono-vaas text-xs" style={{ color: MUTED }}>{deal.telefono}</span>
+                  {waL && (
+                    <a href={waL} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs" style={{ color: "#22D3C0" }}>
+                      <MessageCircle size={13} /> WhatsApp
+                    </a>
+                  )}
+                  {deal.email && (
+                    <a href={`mailto:${deal.email}`} className="flex items-center gap-1 text-xs" style={{ color: GOLD }}>
+                      <Mail size={13} /> Email
+                    </a>
+                  )}
+                </div>
                 {editMode ? (
                   <div className="flex gap-2 mt-3.5">
                     <button onClick={() => approveDeal(deal)} className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 font-semibold text-sm" style={{ background: "#34D399", color: "#06110F" }}>
